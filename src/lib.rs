@@ -17,13 +17,31 @@ pub struct PanCamPlugin;
 #[derive(Debug, Clone, Copy, SystemSet, PartialEq, Eq, Hash)]
 pub struct PanCamSystemSet;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Reflect, Default)]
+pub enum MoveMode {
+    #[default]
+    Both,
+    Keyboard,
+    Mouse,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Reflect)]
+pub struct DirectionKeys {
+    up: Vec<KeyCode>,
+    down: Vec<KeyCode>,
+    left: Vec<KeyCode>,
+    right: Vec<KeyCode>,
+}
+
 impl Plugin for PanCamPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (camera_movement, camera_zoom).in_set(PanCamSystemSet),
+            (mouse_camera_movement, keyboard_movement, camera_zoom).in_set(PanCamSystemSet),
         )
-        .register_type::<PanCam>();
+        .register_type::<PanCam>()
+        .register_type::<MoveMode>()
+        .register_type::<DirectionKeys>();
 
         #[cfg(feature = "bevy_egui")]
         {
@@ -178,7 +196,7 @@ fn max_scale_within_bounds(
     bounds_size / base_world_size
 }
 
-fn camera_movement(
+fn mouse_camera_movement(
     primary_window: Query<&Window, With<PrimaryWindow>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mut query: Query<(&PanCam, &mut Transform, &OrthographicProjection)>,
@@ -196,6 +214,7 @@ fn camera_movement(
 
         for (cam, mut transform, projection) in &mut query {
             if cam.enabled
+                && (cam.move_mode == MoveMode::Both || cam.move_mode == MoveMode::Mouse)
                 && cam
                     .grab_buttons
                     .iter()
@@ -235,10 +254,90 @@ fn camera_movement(
     }
 }
 
+fn keyboard_movement(
+    mut query: Query<(&PanCam, &mut Transform, &OrthographicProjection)>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+) {
+    for (cam, mut transform, projection) in query.iter_mut() {
+        if cam.enabled && (cam.move_mode == MoveMode::Both || cam.move_mode == MoveMode::Keyboard) {
+            let mut direction = Vec2::ZERO;
+
+            if cam
+                .move_keys
+                .left
+                .iter()
+                .any(|key| keyboard_input.pressed(*key))
+            {
+                direction.x += 1.;
+            }
+
+            if cam
+                .move_keys
+                .right
+                .iter()
+                .any(|key| keyboard_input.pressed(*key))
+            {
+                direction.x -= 1.;
+            }
+
+            if cam
+                .move_keys
+                .up
+                .iter()
+                .any(|key| keyboard_input.pressed(*key))
+            {
+                direction.y -= 1.;
+            }
+
+            if cam
+                .move_keys
+                .down
+                .iter()
+                .any(|key| keyboard_input.pressed(*key))
+            {
+                direction.y += 1.;
+            }
+
+            let delta =
+                time.delta_seconds() * direction.normalize_or_zero() * 400. * projection.scale;
+            let proj_size = projection.area.size();
+
+            // The proposed new camera position
+            let mut proposed_cam_transform = transform.translation - delta.extend(0.);
+
+            // Check whether the proposed camera movement would be within the provided boundaries, override it if we
+            // need to do so to stay within bounds.
+            if let Some(min_x_boundary) = cam.min_x {
+                let min_safe_cam_x = min_x_boundary + proj_size.x / 2.;
+                proposed_cam_transform.x = proposed_cam_transform.x.max(min_safe_cam_x);
+            }
+            if let Some(max_x_boundary) = cam.max_x {
+                let max_safe_cam_x = max_x_boundary - proj_size.x / 2.;
+                proposed_cam_transform.x = proposed_cam_transform.x.min(max_safe_cam_x);
+            }
+            if let Some(min_y_boundary) = cam.min_y {
+                let min_safe_cam_y = min_y_boundary + proj_size.y / 2.;
+                proposed_cam_transform.y = proposed_cam_transform.y.max(min_safe_cam_y);
+            }
+            if let Some(max_y_boundary) = cam.max_y {
+                let max_safe_cam_y = max_y_boundary - proj_size.y / 2.;
+                proposed_cam_transform.y = proposed_cam_transform.y.min(max_safe_cam_y);
+            }
+
+            transform.translation = proposed_cam_transform;
+        }
+    }
+}
+
 /// A component that adds panning camera controls to an orthographic camera
 #[derive(Component, Reflect)]
 #[reflect(Component)]
 pub struct PanCam {
+    /// How the camera is moved
+    pub move_mode: MoveMode,
+    /// The keyboard keys that will be used to move the camera
+    pub move_keys: DirectionKeys,
     /// The mouse buttons that will be used to drag and pan the camera
     pub grab_buttons: Vec<MouseButton>,
     /// Whether camera currently responds to user input
@@ -282,6 +381,13 @@ pub struct PanCam {
 impl Default for PanCam {
     fn default() -> Self {
         Self {
+            move_mode: MoveMode::Both,
+            move_keys: DirectionKeys {
+                up: vec![KeyCode::ArrowUp, KeyCode::KeyW],
+                down: vec![KeyCode::ArrowDown, KeyCode::KeyS],
+                left: vec![KeyCode::ArrowLeft, KeyCode::KeyA],
+                right: vec![KeyCode::ArrowRight, KeyCode::KeyD],
+            },
             grab_buttons: vec![MouseButton::Left, MouseButton::Right, MouseButton::Middle],
             enabled: true,
             zoom_to_cursor: true,
