@@ -17,14 +17,19 @@ pub struct PanCamPlugin;
 #[derive(Debug, Clone, Copy, SystemSet, PartialEq, Eq, Hash)]
 pub struct PanCamSystemSet;
 
+/// How the camera is moved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Reflect, Default)]
 pub enum MoveMode {
     #[default]
+    /// Camera is moved through both the keyboard and the mouse.
     Both,
+    /// Camera is moved through only the keyboard.
     Keyboard,
+    /// Camera is moved through only the mouse.
     Mouse,
 }
 
+/// Which keys move the camera in particular directions for keyboard movement.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Reflect)]
 pub struct DirectionKeys {
     up: Vec<KeyCode>,
@@ -300,7 +305,7 @@ fn keyboard_movement(
             }
 
             let delta =
-                time.delta_seconds() * direction.normalize_or_zero() * 400. * projection.scale;
+                time.delta_seconds() * direction.normalize_or_zero() * cam.speed * projection.scale;
             let proj_size = projection.area.size();
 
             // The proposed new camera position
@@ -338,6 +343,8 @@ pub struct PanCam {
     pub move_mode: MoveMode,
     /// The keyboard keys that will be used to move the camera
     pub move_keys: DirectionKeys,
+    /// Speed for keyboard movement
+    pub speed: f32,
     /// The mouse buttons that will be used to drag and pan the camera
     pub grab_buttons: Vec<MouseButton>,
     /// Whether camera currently responds to user input
@@ -388,6 +395,7 @@ impl Default for PanCam {
                 left: vec![KeyCode::ArrowLeft, KeyCode::KeyA],
                 right: vec![KeyCode::ArrowRight, KeyCode::KeyD],
             },
+            speed: 400.,
             grab_buttons: vec![MouseButton::Left, MouseButton::Right, MouseButton::Middle],
             enabled: true,
             zoom_to_cursor: true,
